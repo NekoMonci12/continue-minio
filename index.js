@@ -20,6 +20,14 @@ const minioClient = new Client({
 
 const bucket = process.env.MINIO_BUCKET;
 
+function getSafeTimestamp() {
+  const now = new Date();   // always in UTC internally
+  return now.toISOString()
+    .replace(/:/g, '-')     // Replace ":" with "-"
+    .replace(/\..+/, '')    // Remove milliseconds and timezone
+    .replace('T', '_');     // Replace "T" with "_"
+}
+
 function convertToOpenAIJsonl(promptBlock) {
   const pattern = /<(\w+)>\s*([\s\S]*?)(?=<\w+>|$)/g;
   const chunks = [];
@@ -69,8 +77,8 @@ app.post('/continue-event', async (req, res) => {
 
   const raw = req.body;
   const eventType = raw?.name || 'UnknownEvent';
-  const timestamp = new Date().toISOString();
-  const key = `${eventType}/${timestamp}.json`;
+  const safeTime = getSafeTimestamp();
+  const key = `${eventType}/${eventType}_${safeTime}.json`;
   const data = Buffer.from(JSON.stringify(raw, null, 2), 'utf-8');
 
   try {
@@ -79,7 +87,7 @@ app.post('/continue-event', async (req, res) => {
 
     if (eventType === 'chatInteraction' && raw?.data?.prompt) {
       const jsonl = convertToOpenAIJsonl(raw.data.prompt);
-      const jsonlKey = `openai-finetune/${timestamp}.jsonl`;
+      const jsonlKey = `openai-finetune/${eventType}_${safeTime}.jsonl`;
 
       await minioClient.putObject(bucket, jsonlKey, Buffer.from(jsonl, 'utf-8'));
       console.log(`[✓] Stored OpenAI JSONL at: ${jsonlKey}`);
