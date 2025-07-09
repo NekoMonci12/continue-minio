@@ -22,7 +22,7 @@ const bucket = process.env.MINIO_BUCKET;
 
 function convertToOpenAIJsonl(promptBlock) {
   const pattern = /<(\w+)>\s*([\s\S]*?)(?=<\w+>|$)/g;
-  const messages = [];
+  const chunks = [];
   let match;
 
   while ((match = pattern.exec(promptBlock)) !== null) {
@@ -35,14 +35,30 @@ function convertToOpenAIJsonl(promptBlock) {
 
     const role = roleMap[tag.trim()];
     if (role && content.trim()) {
-      messages.push({
+      chunks.push({
         role,
         content: content.trim(),
       });
     }
   }
 
-  return JSON.stringify({ messages }) + '\n';
+  const lines = [];
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const curr = chunks[i];
+    const next = chunks[i + 1];
+
+    if (curr.role === 'user' && next.role === 'assistant') {
+      lines.push(JSON.stringify({
+        messages: [
+          { role: 'user', content: curr.content },
+          { role: 'assistant', content: next.content },
+        ]
+      }));
+      i++;
+    }
+  }
+
+  return lines.join('\n') + '\n';
 }
 
 app.post('/continue-event', async (req, res) => {
@@ -63,7 +79,7 @@ app.post('/continue-event', async (req, res) => {
 
     if (eventType === 'chatInteraction' && raw?.data?.prompt) {
       const jsonl = convertToOpenAIJsonl(raw.data.prompt);
-      const jsonlKey = `openai/${timestamp}.jsonl`;
+      const jsonlKey = `openai-finetune/${timestamp}.jsonl`;
 
       await minioClient.putObject(bucket, jsonlKey, Buffer.from(jsonl, 'utf-8'));
       console.log(`[✓] Stored OpenAI JSONL at: ${jsonlKey}`);
