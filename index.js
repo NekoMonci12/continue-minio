@@ -20,6 +20,31 @@ const minioClient = new Client({
 
 const bucket = process.env.MINIO_BUCKET;
 
+function convertToOpenAIJsonl(promptBlock) {
+  const pattern = /<(\w+)>\s*([\s\S]*?)(?=<\w+>|$)/g;
+  const messages = [];
+  let match;
+
+  while ((match = pattern.exec(promptBlock)) !== null) {
+    const [, tag, content] = match;
+    const roleMap = {
+      system: 'system',
+      user: 'user',
+      assistant: 'assistant',
+    };
+
+    const role = roleMap[tag.trim()];
+    if (role && content.trim()) {
+      messages.push({
+        role,
+        content: content.trim(),
+      });
+    }
+  }
+
+  return JSON.stringify({ messages }) + '\n';
+}
+
 app.post('/continue-event', async (req, res) => {
   if (debug) {
     console.log('\n🛰️  Incoming request from Continue.dev');
@@ -35,6 +60,15 @@ app.post('/continue-event', async (req, res) => {
   try {
     await minioClient.putObject(bucket, key, data);
     console.log(`[✓] Stored to MinIO at: ${key}`);
+
+    if (eventType === 'chatInteraction' && raw?.data?.prompt) {
+      const jsonl = convertToOpenAIJsonl(raw.data.prompt);
+      const jsonlKey = `openai/${timestamp}.jsonl`;
+
+      await minioClient.putObject(bucket, jsonlKey, Buffer.from(jsonl, 'utf-8'));
+      console.log(`[✓] Stored OpenAI JSONL at: ${jsonlKey}`);
+    }
+
     res.status(200).json({ status: 'stored', key });
   } catch (err) {
     console.error('[x] MinIO write failed:', err);
